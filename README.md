@@ -140,6 +140,8 @@ The node returns a **JSON array** like:
 Each array item results in one Discord message.
 
 ---
+![Discord Notification Screenshot](image.png)
+![N8N Workflow Screenshot](imagen8n.png)
 
 ## ⚠️ Important Learnings About n8n Runners
 
