@@ -1,0 +1,188 @@
+{
+  "name": "Sat_Tracker",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "793777d0-d263-4ea0-a9fa-687daf63a0ac",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "language": "pythonNative",
+        "pythonCode": "from skyfield.api import load, wgs84, EarthSatellite, utc\nfrom datetime import datetime, timedelta\nimport pytz\nimport requests\n\n# =========================\n# CONFIG\n# =========================\nLAT, LON, ELEV_M = 13.0827, 80.2707, 6\nTIMEZONE = pytz.timezone(\"Asia/Kolkata\")\n\nMIN_ELEVATION = 10\nEARLY_ALERT_MINUTES = 10\n\nSATELLITES = {\n    \"ISS\": 25544,\n    \"HUBBLE\": 20580,\n    \"TIANGONG\": 48274\n}\n\n# =========================\n# SKYFIELD\n# =========================\nload.directory = \"/data/skyfield\"\n\nts = load.timescale()\nobserver = wgs84.latlon(LAT, LON, elevation_m=ELEV_M)\n\neph = load(\"de421.bsp\")\nearth = eph[\"earth\"]\nsun = eph[\"sun\"]\n\ndef fetch_satellite(norad_id):\n    url = f\"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE\"\n    lines = requests.get(url, timeout=10).text.strip().splitlines()\n    return EarthSatellite(lines[1], lines[2], lines[0], ts)\n\ndef is_night(t):\n    astrometric = (earth + observer).at(t).observe(sun)\n    alt, _, _ = astrometric.apparent().altaz()\n    return alt.degrees < -6\n\n# =========================\n# MAIN\n# =========================\nresults = []\n\nnow = ts.now()\nend = ts.from_datetime(datetime.now(utc) + timedelta(hours=24))\n\nfor name, norad in SATELLITES.items():\n    try:\n        sat = fetch_satellite(norad)\n        times, events = sat.find_events(observer, now, end, altitude_degrees=MIN_ELEVATION)\n\n        for i, (t_event, event) in enumerate(zip(times, events)):\n            if event != 0:\n                continue  # rise only\n\n            rise_utc = t_event.utc_datetime()\n            rise_local = rise_utc.astimezone(TIMEZONE)\n\n            seconds_to_rise = (rise_local - datetime.now(TIMEZONE)).total_seconds()\n            if not (0 < seconds_to_rise <= EARLY_ALERT_MINUTES * 60):\n                continue\n\n            if not is_night(t_event):\n                continue\n\n            if i + 2 >= len(times):\n                continue\n\n            t_set = times[i + 2]\n            t_mid = t_event + (t_set - t_event) / 2\n\n            alt, az, _ = (sat - observer).at(t_mid).altaz()\n\n            pass_key = f\"{name}-{rise_utc.isoformat()}\"\n\n            results.append({\n                \"pass_key\": pass_key,\n                \"satellite\": name,\n                \"rise_time\": rise_local.strftime(\"%H:%M:%S\"),\n                \"max_elevation\": round(alt.degrees, 1),\n                \"direction\": az.compass_point()\n            })\n\n    except Exception as e:\n        continue\n\nreturn results"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "626ebf79-2c2f-4e4b-896e-834aaf250488",
+      "name": "Code in Python (Native) (Beta)",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ab01fa07-057d-4b4a-88f8-3956d410ae31",
+              "leftValue": "={{$json.length}}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        416,
+        0
+      ],
+      "id": "abc7710c-4f20-4acd-8662-8e218fc03a91",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        704,
+        -16
+      ],
+      "id": "d9efbe2c-de03-4ece-802e-e7b2b19b22c8",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me",
+      "typeVersion": 1,
+      "position": [
+        784,
+        224
+      ],
+      "id": "f3554592-1e72-4b75-b6c6-aa69836767bb"
+    },
+    {
+      "parameters": {
+        "webhookUri": "",
+        "text": "=🛰️ **{{$json.satellite}} Pass Alert**\n\n📍 **Chennai**\n⏰ Rise: **{{$json.rise_time}} IST**\n📈 Max elevation: **{{$json.max_elevation}}°**\n🧭 Direction: **{{$json.direction}}**\n\n👀 Look up if the sky is clear!\n",
+        "options": {}
+      },
+      "id": "103c0f13-5898-4c6e-ad6d-7eb3a51d5223",
+      "name": "Notify channel",
+      "type": "n8n-nodes-base.discord",
+      "position": [
+        928,
+        16
+      ],
+      "typeVersion": 1
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in Python (Native) (Beta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in Python (Native) (Beta)": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Notify channel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Replace Me",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Me": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "828fef4d-3af8-458a-a441-74fbc5c375b9",
+  "meta": {
+    "instanceId": "59baedc9205dcd75bc173635a80ce4fc19dee4c6cc9fce5b182690617069d87a"
+  },
+  "id": "s3cnrfXgGFjrxXrv",
+  "tags": []
+}
